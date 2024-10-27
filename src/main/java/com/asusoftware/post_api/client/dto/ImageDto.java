@@ -10,7 +10,6 @@ import java.util.UUID;
 public class ImageDto {
 
     private UUID id;
-    private String url;
     private String fileName;
-    private long size;
+    private String fileUrl;
 }

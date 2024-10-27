@@ -45,4 +45,4 @@ external-link:
 
 image:
   service:
-    url: ${IMAGE_API_URL:http://localhost:8083/api/v1/images}
+    url: ${IMAGE_API_URL:http://localhost:8085}

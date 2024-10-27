@@ -2,6 +2,8 @@ package com.asusoftware.post_api.service.impl;
 
 import com.asusoftware.post_api.client.ImageServiceClient;
 import com.asusoftware.post_api.client.dto.ImageDto;
+import com.asusoftware.post_api.client.dto.ImageType;
+import com.asusoftware.post_api.client.dto.UpdateImagesRequest;
 import com.asusoftware.post_api.exception.ResourceNotFoundException;
 import com.asusoftware.post_api.model.Post;
 import com.asusoftware.post_api.model.dto.CreatePostDto;
@@ -19,6 +21,7 @@ import org.springframework.data.domain.Pageable;
 
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
@@ -43,16 +46,24 @@ public class PostServiceImpl implements PostService {
         // Save the post without images to get the ID
         Post savedPost = postRepository.save(post);
 
+        PostDto updatedPostDto;
+
         // If images are provided, upload them using the Image service and get their URLs
         if (images != null && !images.isEmpty()) {
-            List<ImageDto> uploadedImages = imageServiceClient.uploadImages(images, savedPost.getId());
-            savedPost.setImageIds(uploadedImages.stream().map(ImageDto::getId).collect(Collectors.toList()));
-        }
+            String ownerId = savedPost.getId().toString();  // Convert UUID to String
+            String imageType = ImageType.POST.name();       // Convert enum to String
 
-        // Save the post with the image IDs
-        Post updatedPost = postRepository.save(savedPost);
-        // TODO: add also the images in this dto
-        return PostDto.fromEntity(updatedPost);
+            List<ImageDto> uploadedImages = imageServiceClient.uploadImages(images, ownerId, imageType);
+            savedPost.setImageIds(uploadedImages.stream().map(ImageDto::getId).collect(Collectors.toList()));
+            // Save the post with the image IDs
+            Post updatedPost = postRepository.save(savedPost);
+            // TODO: add also the images in this dto
+            updatedPostDto = PostDto.fromEntity(updatedPost);
+            updatedPostDto.setImages(uploadedImages);
+        } else {
+            updatedPostDto = PostDto.fromEntity(savedPost);
+        }
+        return updatedPostDto;
     }
 
     @Transactional
@@ -72,7 +83,11 @@ public class PostServiceImpl implements PostService {
         // If new images are provided, upload them and update the post
         if (newImages != null && !newImages.isEmpty()) {
             // Upload the new images and get the IDs
-            List<ImageDto> uploadedImages = imageServiceClient.uploadImages(newImages, existingPost.getId());
+            UpdateImagesRequest updateImagesRequest = new UpdateImagesRequest();
+            updateImagesRequest.setType(ImageType.POST);
+            updateImagesRequest.setExistingImages(postDto.getExistingImages());
+            updateImagesRequest.setOwnerId(postId);
+            List<ImageDto> uploadedImages = imageServiceClient.updateImages(updateImagesRequest, newImages);
             List<UUID> newImageIds = uploadedImages.stream().map(ImageDto::getId).collect(Collectors.toList());
 
             // Replace the existing image IDs with the new ones
@@ -89,7 +104,13 @@ public class PostServiceImpl implements PostService {
     public PostDto getPostById(UUID postId) {
         Post post = postRepository.findById(postId)
                 .orElseThrow(() -> new ResourceNotFoundException("Post not found"));
-        return PostDto.fromEntity(post);
+        PostDto postDto = PostDto.fromEntity(post);
+        List<ImageDto> imageList;
+        if(!post.getImageIds().isEmpty()) {
+            imageList = imageServiceClient.getImagesByOwnerId(post.getId(), ImageType.POST);
+            postDto.setImages(imageList);
+        }
+        return postDto;
     }
 
     @Override
@@ -99,15 +120,12 @@ public class PostServiceImpl implements PostService {
 
         // Map the posts to PostDto and include images
         Page<PostDto> postDtoPage = postPage.map(post -> {
+            List<ImageDto> imageList;
             // Convert Post entity to PostDto
             PostDto postDto = PostDto.fromEntity(post);
-
-            // Fetch images for the post
-            List<UUID> imageIds = post.getImageIds();  // Assuming post has a list of image UUIDs
-            if (imageIds != null && !imageIds.isEmpty()) {
-                // Fetch images for the post
-                List<ImageDto> images = imageServiceClient.getImagesByIds(imageIds);
-                postDto.setImages(images);
+            if(!post.getImageIds().isEmpty()) {
+                imageList = imageServiceClient.getImagesByOwnerId(post.getId(), ImageType.POST);
+                postDto.setImages(imageList);
             } else {
                 postDto.setImages(Collections.emptyList());  // No images for the post
             }
@@ -127,7 +145,7 @@ public class PostServiceImpl implements PostService {
 
         // Ștergem imaginile asociate postării
         if (!post.getImageIds().isEmpty()) {
-            imageServiceClient.deleteImagesByPostId(post.getImageIds());  // Transmitem ID-urile imaginilor
+            imageServiceClient.deleteAllImages(post.getId(), ImageType.POST);  // Transmitem ID-urile imaginilor
         }
 
         // Ștergem postarea din baza de date
